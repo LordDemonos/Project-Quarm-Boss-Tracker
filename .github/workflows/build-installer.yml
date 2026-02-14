@@ -1,0 +1,103 @@
+name: Build Windows Installer
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: false
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for git tags
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Install Inno Setup
+      run: |
+        choco install innosetup -y
+    
+    - name: Extract version
+      id: version
+      shell: pwsh
+      run: |
+        $version = ""
+        if ("${{ github.event_name }}" -eq "release") {
+          # Extract from release tag (remove 'v' prefix if present)
+          $version = "${{ github.event.release.tag_name }}"
+          $version = $version -replace '^v', ''
+        } elseif ("${{ inputs.version }}") {
+          # Use manual input version
+          $version = "${{ inputs.version }}"
+        } else {
+          # Try to get from git tag
+          $gitTag = git describe --tags --abbrev=0 2>$null
+          if ($gitTag) {
+            $version = $gitTag -replace '^v', ''
+          }
+          if (-not $version) {
+            # Fall back to version.txt
+            if (Test-Path version.txt) {
+              $version = (Get-Content version.txt -Raw).Trim()
+            } else {
+              $version = "1.0.0"
+            }
+          }
+        }
+        Write-Host "version=$version" >> $env:GITHUB_OUTPUT
+        Write-Host "Version: $version"
+    
+    - name: Update version.txt for About dialog
+      shell: pwsh
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        Set-Content -Path version.txt -Value $version -NoNewline
+        # Use current date as release date (About dialog reads version.txt mtime)
+        (Get-Item version.txt).LastWriteTime = Get-Date
+        Get-Content version.txt
+        Write-Host "version.txt updated; release date = build date"
+    
+    - name: Build executable and installer
+      shell: pwsh
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        python build_installer.py $version
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Build failed"
+          exit 1
+        }
+    
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: BossTracker-Setup-v${{ steps.version.outputs.version }}
+        path: dist/BossTracker-Setup-v${{ steps.version.outputs.version }}.exe
+        retention-days: 30
+    
+    - name: Upload installer to release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/BossTracker-Setup-v${{ steps.version.outputs.version }}.exe
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

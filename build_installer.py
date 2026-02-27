@@ -233,6 +233,7 @@ def validate_files():
         Path('src/main.py'),
         Path('icons/tray_icon.ico'),
         Path('assets/fanfare.mp3'),
+        Path('data/bosses.json'),
         Path('installer/boss_tracker.iss'),
     ]
     

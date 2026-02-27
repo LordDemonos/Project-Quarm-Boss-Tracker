@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets'), ('icons', 'icons')]
+datas = [('assets', 'assets'), ('icons', 'icons'), ('version.txt', '.'), ('data/bosses.json', 'data')]
 binaries = []
 hiddenimports = ['PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'logger', 'message_parser', 'boss_database', 'discord_notifier', 'sound_player', 'log_monitor', 'system_tray', 'options_window', 'message_editor', 'theme_manager', 'timestamp_formatter', 'activity_database', 'activity_log', 'main_window', 'new_boss_dialog', 'security', 'os_theme_detector', 'zone_group_widget', 'discord_checker']
 tmp_ret = collect_all('src')

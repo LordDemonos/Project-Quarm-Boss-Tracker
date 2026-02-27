@@ -245,10 +245,14 @@ class BossTrackerApp(QObject):
         if settings_migrated:
             self._save_settings()
         
-        # Start Discord sync timer with configured interval (after settings loaded)
-        interval_hours = max(1, min(168, int(self.settings.get('discord_sync_interval_hours', 12))))
-        self.discord_sync_timer.start(interval_hours * 3600 * 1000)
-        logger.debug(f"Discord sync timer started: every {interval_hours} hour(s)")
+        # Start Discord sync timer only when Discord is configured (webhook + bot token)
+        if self._has_discord_sync_config():
+            interval_hours = max(1, min(168, int(self.settings.get('discord_sync_interval_hours', 12))))
+            self.discord_sync_timer.start(interval_hours * 3600 * 1000)
+            logger.debug(f"Discord sync timer started: every {interval_hours} hour(s)")
+        else:
+            self.discord_sync_timer.stop()
+            logger.debug("Discord sync timer not started: webhook or bot token not configured")
         
         # Set application icon (for all windows) - done after settings are loaded
         # #region agent log
@@ -580,9 +584,10 @@ class BossTrackerApp(QObject):
         # Use QTimer.singleShot to schedule updates after app.exec() starts
         QTimer.singleShot(0, self._initialize_ui)
         
-        # Check if Discord sync is needed on startup (after a delay to let Discord checker initialize)
+        # Check if Discord sync is needed on startup (only when Discord is configured)
         # Wait 10 seconds to give Discord client time to connect and be ready
-        QTimer.singleShot(10000, self._check_and_sync_discord)  # 10 second delay
+        if self._has_discord_sync_config():
+            QTimer.singleShot(10000, self._check_and_sync_discord)  # 10 second delay
         
         # Timer to update active character display
         self.update_timer = QTimer()
@@ -705,7 +710,7 @@ class BossTrackerApp(QObject):
             "window_popup_on_new_boss": True,
             "windows_notification": False,  # Note: Actually cross-platform, name kept for backward compatibility
             "auto_detect_active_file": True,
-            "new_boss_default_action": "disable",  # "enable" or "disable" - default action for new targets
+            "new_boss_default_action": "enable",  # "enable" or "disable" - default action for new targets
             "accent_color": "#007acc",  # Default blue accent color
             "theme": default_theme,  # Use detected OS theme on first run
             "window_geometry": None,  # Base64 encoded window geometry
@@ -1433,8 +1438,11 @@ class BossTrackerApp(QObject):
             Selected boss dictionary, or None if cancelled
         """
         try:
-            from .duplicate_boss_dialog import DuplicateBossDialog
-            
+            try:
+                from .duplicate_boss_dialog import DuplicateBossDialog
+            except ImportError:
+                from duplicate_boss_dialog import DuplicateBossDialog
+
             logger.info(f"[DUPLICATE DIALOG] Showing selection dialog for '{boss_name}' with {len(duplicate_bosses)} options")
             for i, boss in enumerate(duplicate_bosses):
                 note = boss.get('note', '').strip()
@@ -1589,6 +1597,16 @@ class BossTrackerApp(QObject):
         except Exception as e:
             logger.error(f"Error adding new boss: {e}", exc_info=True)
     
+    def _has_discord_sync_config(self) -> bool:
+        """
+        Return True if Discord is configured enough for sync (webhook + bot token).
+        When False, we should not start the sync timer or run sync checks.
+        Uses in-memory settings (loaded from same file as _get_webhook_url_for_post at startup/save).
+        """
+        webhook = (self.settings.get('default_webhook_url') or '').strip()
+        token = (self.settings.get('discord_bot_token') or '').strip()
+        return bool(webhook and token)
+
     def _get_webhook_url_for_post(self) -> str:
         """
         Return the webhook URL to use for Discord posts. Reads ONLY from the settings file.
@@ -2115,12 +2133,16 @@ class BossTrackerApp(QObject):
     def _check_and_sync_discord(self, force: bool = False) -> None:
         """
         Check if configured interval has passed since last Discord sync, and sync if needed.
-        
+
         Args:
             force: If True, skip the interval check and sync immediately
         """
         from datetime import datetime, timedelta
-        
+
+        # Don't run sync at all until user has configured Discord (webhook + bot token)
+        if not force and not self._has_discord_sync_config():
+            return
+
         interval_hours = max(1, min(168, int(self.settings.get('discord_sync_interval_hours', 12))))
         
         if not force:
@@ -2157,7 +2179,7 @@ class BossTrackerApp(QObject):
     def _sync_kill_times_from_discord(self) -> None:
         """Sync last kill times from Discord channel messages."""
         from datetime import datetime
-        
+
         if not self.discord_checker or not self.discord_checker.ready:
             logger.warning("Discord checker not available or not ready, cannot sync from Discord")
             self.main_window.add_activity(
@@ -2203,13 +2225,23 @@ class BossTrackerApp(QObject):
                 "Starting Discord sync..."
             )
             
-            # Get all unique boss names from database
+            # Get all unique boss names from database (same source as rest of app)
             all_bosses = self.boss_db.get_all_bosses()
             boss_names = list(set(boss['name'] for boss in all_bosses))
             
             # Include all bosses in scan (including duplicates)
             # Discord messages with notes like "Thall Va Xakra (South)" will be handled specially
             boss_names_to_scan = boss_names
+            
+            if not boss_names_to_scan:
+                logger.warning("Discord sync: no bosses in tracker; skipping scan and not updating last sync time")
+                self.main_window.add_activity(
+                    datetime.now().strftime("%a %b %d %H:%M:%S %Y"),
+                    "Discord Sync",
+                    "",
+                    "No bosses in tracker; add bosses to sync kill times from Discord. Last sync time not updated."
+                )
+                return
             
             duplicate_boss_names = ["Thall Va Xakra", "Kaas Thox Xi Aten Ha Ra"]
             duplicate_count = sum(1 for name in boss_names if name in duplicate_boss_names)
@@ -2310,10 +2342,14 @@ class BossTrackerApp(QObject):
                 self.boss_db.save()
                 logger.info(f"Updated {updated_count} boss kill times from Discord")
             
-            # Save sync time to settings
-            self.settings['last_discord_sync_time'] = datetime.now().isoformat()
-            self._save_settings()
-            logger.debug("Saved Discord sync time to settings")
+            # Save sync time only when we actually performed a meaningful sync (had bosses to scan).
+            # If we had 0 bosses to scan, do not update last sync so the next run is not skipped for 12h.
+            if boss_names_to_scan:
+                self.settings['last_discord_sync_time'] = datetime.now().isoformat()
+                self._save_settings()
+                logger.debug("Saved Discord sync time to settings")
+            else:
+                logger.debug("Discord sync: no bosses to scan; not updating last sync time")
             
             # Refresh UI
             self._refresh_bosses()
@@ -2794,8 +2830,11 @@ class BossTrackerApp(QObject):
     def _on_add_boss_requested(self) -> None:
         """Handle add boss request from UI."""
         try:
-            from .add_boss_dialog import AddBossDialog
-            
+            try:
+                from .add_boss_dialog import AddBossDialog
+            except ImportError:
+                from add_boss_dialog import AddBossDialog
+
             dialog = AddBossDialog(self.main_window)
             if dialog.exec():
                 name, location, note = dialog.get_boss_data()
@@ -3009,12 +3048,15 @@ class BossTrackerApp(QObject):
         use_military_time = self.settings.get('use_military_time', False)
         self.main_window.zone_widget.set_time_format(use_military_time)
         
-        # Restart Discord sync timer with new interval if setting changed
-        if 'discord_sync_interval_hours' in new_settings:
+        # Start/stop Discord sync timer based on whether Discord is configured
+        if self._has_discord_sync_config():
             interval_hours = max(1, min(168, int(self.settings.get('discord_sync_interval_hours', 12))))
             self.discord_sync_timer.stop()
             self.discord_sync_timer.start(interval_hours * 3600 * 1000)
-            logger.info(f"Discord sync timer restarted: every {interval_hours} hour(s)")
+            logger.info(f"Discord sync timer started: every {interval_hours} hour(s)")
+        else:
+            self.discord_sync_timer.stop()
+            logger.debug("Discord sync timer stopped: webhook or bot token not configured")
         
         # Update sound
         self.sound_player.set_enabled(self.settings.get('sound_enabled', True))
@@ -3030,19 +3072,33 @@ class BossTrackerApp(QObject):
         if str(new_sound_path) != str(self.sound_player.sound_file_path):
             self.sound_player.set_sound_file(str(new_sound_path))
         
-        # Update Discord checker
-        bot_token = self.settings.get('discord_bot_token', '')
+        # Update Discord checker: use token from new_settings (form) so we have the value just saved
+        bot_token = (new_settings.get('discord_bot_token') or '').strip()
+        if not bot_token:
+            bot_token = (self.settings.get('discord_bot_token') or '').strip()
         if bot_token and not self.discord_checker:
             if DiscordChecker:
                 try:
+                    import asyncio
+                    import threading
+                    logger.info("Creating Discord checker from saved credentials (token length=%d)", len(bot_token))
                     self.discord_checker = DiscordChecker(bot_token)
-                    logger.info("Discord checker created from settings")
+
+                    def _init_discord_checker():
+                        try:
+                            asyncio.run(self.discord_checker.initialize())
+                            logger.info("Discord checker initialized after settings save")
+                        except Exception as e:
+                            logger.error(f"Error initializing Discord checker: {e}")
+
+                    init_thread = threading.Thread(target=_init_discord_checker, daemon=True)
+                    init_thread.start()
+                    logger.info("Discord checker created from settings (initializing in background)")
                 except Exception as e:
                     logger.warning(f"Failed to create Discord checker: {e}")
                     self.discord_checker = None
             else:
                 logger.warning("Discord checker not available (discord.py not installed)")
-            logger.info("Discord checker created with new bot token")
         elif bot_token and self.discord_checker:
             self.discord_checker.bot_token = bot_token
             logger.info("Discord checker bot token updated")
@@ -3063,7 +3119,10 @@ class BossTrackerApp(QObject):
     def _show_respawn_time_editor_for_boss(self, initial_boss) -> None:
         """Show the respawn time editor dialog, optionally with a specific boss preselected."""
         try:
-            from .respawn_time_editor import RespawnTimeEditor
+            try:
+                from .respawn_time_editor import RespawnTimeEditor
+            except ImportError:
+                from respawn_time_editor import RespawnTimeEditor
 
             bosses = self.boss_db.get_all_bosses()
             if not bosses:

@@ -32,7 +32,7 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 
@@ -45,7 +45,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [Files]
 ; Main executable (--onedir mode creates a folder)
@@ -59,52 +58,110 @@ Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubd
 ; Icons directory
 Source: "..\icons\*"; DestDir: "{app}\icons"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Optional: Default bosses.json if pre-populating
-; Source: "..\data\bosses.json"; DestDir: "{app}"; Flags: ignoreversion; Check: FileExists(ExpandConstant("{#SourcePath}\..\data\bosses.json"))
+; Default boss list (so new installs have full mob list; app expects {app}\data\bosses.json)
+Source: "..\data\bosses.json"; DestDir: "{app}\data"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: quicklaunchicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var
-  KeepSettingsCheckbox: TNewCheckBox;
   UserDataDir: String;
+  UninstallKeepSettingsChoice: Boolean;  // Set by the initial "pause" dialog
+  UninstallChoiceMade: Boolean;         // True after user has seen the dialog
+
+function InitializeUninstall(): Boolean;
+var
+  UninstallForm: TSetupForm;
+  InfoLabel: TLabel;
+  KeepCheckbox: TNewCheckBox;
+  UninstallBtn: TNewButton;
+  CancelBtn: TNewButton;
+begin
+  Result := True;
+  UninstallKeepSettingsChoice := True;
+  UninstallChoiceMade := False;
+
+  if UninstallSilent then
+    Exit;
+
+  UninstallForm := CreateCustomForm(ScaleX(400), ScaleY(200), False, False);
+  UninstallForm.Caption := 'Uninstall {#AppName}';
+  UninstallForm.BorderStyle := bsDialog;
+
+  InfoLabel := TLabel.Create(UninstallForm);
+  InfoLabel.Parent := UninstallForm;
+  InfoLabel.Caption := 'Do you want to keep your settings and data (webhook, bot token, boss list, activity log)?';
+  InfoLabel.Left := ScaleX(16);
+  InfoLabel.Top := ScaleY(16);
+  InfoLabel.Width := UninstallForm.ClientWidth - ScaleX(32);
+  InfoLabel.AutoSize := False;
+  InfoLabel.WordWrap := True;
+
+  KeepCheckbox := TNewCheckBox.Create(UninstallForm);
+  KeepCheckbox.Parent := UninstallForm;
+  KeepCheckbox.Caption := 'Keep my settings and data';
+  KeepCheckbox.Checked := True;
+  KeepCheckbox.Left := ScaleX(16);
+  KeepCheckbox.Top := ScaleY(72);
+  KeepCheckbox.Width := UninstallForm.ClientWidth - ScaleX(32);
+
+  CancelBtn := TNewButton.Create(UninstallForm);
+  CancelBtn.Parent := UninstallForm;
+  CancelBtn.Caption := 'Cancel';
+  CancelBtn.ModalResult := mrCancel;
+  CancelBtn.Left := UninstallForm.ClientWidth - ScaleX(180);
+  CancelBtn.Top := ScaleY(140);
+  CancelBtn.Width := ScaleX(75);
+  CancelBtn.Height := ScaleY(23);
+
+  UninstallBtn := TNewButton.Create(UninstallForm);
+  UninstallBtn.Parent := UninstallForm;
+  UninstallBtn.Caption := 'Uninstall';
+  UninstallBtn.ModalResult := mrOK;
+  UninstallBtn.Left := UninstallForm.ClientWidth - ScaleX(92);
+  UninstallBtn.Top := ScaleY(140);
+  UninstallBtn.Width := ScaleX(75);
+  UninstallBtn.Height := ScaleY(23);
+
+  UninstallForm.ActiveControl := KeepCheckbox;
+
+  if UninstallForm.ShowModal() = mrOK then
+  begin
+    UninstallKeepSettingsChoice := KeepCheckbox.Checked;
+    UninstallChoiceMade := True;
+    Result := True;
+  end
+  else
+  begin
+    Result := False;  // Abort uninstall
+  end;
+end;
 
 procedure InitializeUninstallProgressForm();
 var
   InfoLabel: TLabel;
 begin
-  // Set user data directory path
   UserDataDir := ExpandConstant('{localappdata}\boss tracker');
-  
-  // Only show checkbox if not silent uninstall
-  if not UninstallSilent then
+
+  if not UninstallSilent and UninstallChoiceMade then
   begin
-    // Create info label
     InfoLabel := TLabel.Create(UninstallProgressForm);
     InfoLabel.Parent := UninstallProgressForm;
-    InfoLabel.Caption := 'Choose whether to keep your settings and data:';
+    if UninstallKeepSettingsChoice then
+      InfoLabel.Caption := 'Your settings and data will be kept.'
+    else
+      InfoLabel.Caption := 'Your settings and data will be removed.';
     InfoLabel.Left := ScaleX(16);
     InfoLabel.Top := ScaleY(180);
     InfoLabel.Width := UninstallProgressForm.ClientWidth - ScaleX(32);
     InfoLabel.AutoSize := False;
     InfoLabel.WordWrap := True;
-    
-    // Create checkbox on the uninstall progress form
-    KeepSettingsCheckbox := TNewCheckBox.Create(UninstallProgressForm);
-    KeepSettingsCheckbox.Parent := UninstallProgressForm;
-    KeepSettingsCheckbox.Caption := 'Keep my settings and data';
-    KeepSettingsCheckbox.Checked := True; // Default to keeping settings
-    KeepSettingsCheckbox.Left := ScaleX(16);
-    KeepSettingsCheckbox.Top := ScaleY(210);
-    KeepSettingsCheckbox.Width := UninstallProgressForm.ClientWidth - ScaleX(32);
-    KeepSettingsCheckbox.Font.Size := 9;
   end;
 end;
 
@@ -114,42 +171,36 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // Get user's choice (default to True if checkbox doesn't exist or silent uninstall)
-    if Assigned(KeepSettingsCheckbox) then
-      KeepSettings := KeepSettingsCheckbox.Checked
+    if UninstallChoiceMade then
+      KeepSettings := UninstallKeepSettingsChoice
     else
-      KeepSettings := True; // Default to keeping settings if checkbox not available
-    
-    // Store choice in registry for reference
+      KeepSettings := True;
+
     if KeepSettings then
-    begin
       RegWriteStringValue(HKEY_CURRENT_USER,
         'Software\Microsoft\Windows\CurrentVersion\Uninstall\BossTracker',
-        'KeepSettings', '1');
-    end
+        'KeepSettings', '1')
     else
-    begin
       RegWriteStringValue(HKEY_CURRENT_USER,
         'Software\Microsoft\Windows\CurrentVersion\Uninstall\BossTracker',
         'KeepSettings', '0');
-    end;
   end;
-  
+
   if CurUninstallStep = usPostUninstall then
   begin
-    // After uninstall completes, check if we should delete user data
-    if Assigned(KeepSettingsCheckbox) then
-      KeepSettings := KeepSettingsCheckbox.Checked
+    if UninstallChoiceMade then
+      KeepSettings := UninstallKeepSettingsChoice
     else
-      KeepSettings := True; // Default to keeping settings if checkbox not available
-    
+      KeepSettings := True;
+
     if not KeepSettings then
     begin
-      // Delete user data directory
       if DirExists(UserDataDir) then
-      begin
         DelTree(UserDataDir, True, True, True);
-      end;
     end;
+
+    // Remove runtime-created logs in install dir (app writes .cursor/debug.log there)
+    if DirExists(ExpandConstant('{app}\.cursor')) then
+      DelTree(ExpandConstant('{app}\.cursor'), True, True, True);
   end;
 end;

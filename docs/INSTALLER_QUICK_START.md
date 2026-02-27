@@ -20,6 +20,36 @@
 
 ## For Developers
 
+### How the build process works
+
+Building the installer is **two steps in one command**:
+
+1. **PyInstaller** (build the executable)
+   - Run from the **project root** (where `build_installer.py` lives).
+   - Bundles your Python app and dependencies into a folder: `dist/BossTracker/`.
+   - That folder contains:
+     - `BossTracker.exe`
+     - Python runtime and libraries
+     - `assets/`, `icons/`, `version.txt`
+     - **`data/bosses.json`** (default boss list; added via `--add-data=data/bosses.json;data` in `build_installer.py`).
+   - The app at runtime looks for this default list under the install directory (e.g. `{app}\data\bosses.json`) so new installs get the full mob list.
+
+2. **Inno Setup** (build the installer)
+   - Takes `dist/BossTracker/` and the repo’s `assets/`, `icons/`, and **`data/bosses.json`**.
+   - Produces a single installer: `dist/BossTracker-Setup-vX.X.X.exe`.
+   - When a user runs that installer, it copies everything into the install dir (e.g. `%LOCALAPPDATA%\Programs\Boss Tracker\`), including `data\bosses.json`.
+   - The installer script is `installer/boss_tracker.iss`; it explicitly includes `Source: "..\data\bosses.json"; DestDir: "{app}\data"` so the default list is always installed even if PyInstaller’s bundle were missing it.
+
+**One command does both steps:**
+
+```bash
+python build_installer.py
+```
+
+This runs PyInstaller (with the correct `--add-data` so `data/bosses.json` is in the bundle), then runs the Inno Setup compiler. You need **PyInstaller** (`pip install pyinstaller`) and **Inno Setup** (installed on Windows) for the full build.
+
+**Optional:** `python build_installer.py --skip-exe` skips the PyInstaller step and only rebuilds the installer from the existing `dist/BossTracker/` folder (useful if you only changed the `.iss` script).
+
 ### Building Locally
 
 1. **Install Inno Setup**:

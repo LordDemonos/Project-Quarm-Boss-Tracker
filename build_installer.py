@@ -81,6 +81,7 @@ def build_executable(version: str):
         "--add-data=assets;assets",
         "--add-data=icons;icons",
         "--add-data=version.txt;.",  # About dialog version and release date (mtime)
+        "--add-data=data/bosses.json;data",  # Default boss list for new installs
         "--hidden-import=PyQt6.QtCore",
         "--hidden-import=PyQt6.QtGui",
         "--hidden-import=PyQt6.QtWidgets",

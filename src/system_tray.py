@@ -134,10 +134,11 @@ class SystemTray(QObject):
         logger.info(f"[NOTIFICATION] Attempting to show notification: {title} - {message[:100]}...")
         
         try:
+            # Use NoIcon so the notification uses our tray/app icon instead of the generic blue "i"
             self.tray_icon.showMessage(
                 title,
                 message,
-                QSystemTrayIcon.MessageIcon.Information,
+                QSystemTrayIcon.MessageIcon.NoIcon,
                 10000  # Show for 10 seconds
             )
             logger.info(f"[NOTIFICATION] Notification showMessage() called successfully")

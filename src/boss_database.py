@@ -1,6 +1,7 @@
 """Manage the boss database - loading, saving, and querying boss entries."""
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict
@@ -74,39 +75,43 @@ class BossDatabase:
         # After loading, merge defaults again to ensure respawn times are applied
         # (This handles the case where file existed but defaults weren't merged)
         logger.info(f"[INIT] Step 3: Merging defaults into loaded data")
-        if self.app_dir:
-            default_bosses_path = self.app_dir / "default_bosses.json"
-            if not default_bosses_path.exists():
-                default_bosses_path = self.app_dir / "data" / "bosses.json"
-            if not default_bosses_path.exists():
-                default_bosses_path = self.app_dir / "assets" / "bosses.json"
-            if not default_bosses_path.exists():
-                default_bosses_path = self.app_dir / "bosses.json"
-            if default_bosses_path.exists():
-                logger.info(f"[INIT] Found default file: {default_bosses_path}")
-                self._merge_defaults(default_bosses_path)
-            else:
-                logger.info(f"[INIT] No default bosses.json found - skipping merge")
+        default_bosses_path = self._find_default_bosses_path()
+        if default_bosses_path:
+            self._merge_defaults(default_bosses_path)
+        else:
+            logger.info(f"[INIT] No default bosses.json found - skipping merge")
         
         logger.info(f"[INIT] Initialization complete: {len(self.bosses)} bosses loaded")
     
+    def _get_default_bosses_search_bases(self) -> List[Path]:
+        """Return list of directories to search for default bosses.json (first that exists wins).
+        When frozen, PyInstaller places bundled datas in sys._MEIPASS, so we check that first.
+        """
+        bases: List[Path] = []
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                bases.append(Path(meipass))
+                logger.debug(f"[INIT] Frozen run: adding bundle base sys._MEIPASS={meipass}")
+        if self.app_dir:
+            bases.append(self.app_dir)
+        return bases
+    
+    def _find_default_bosses_path(self) -> Optional[Path]:
+        """Find default bosses.json in bundle/app dir. Checks data/, assets/, root, default_bosses.json."""
+        for base in self._get_default_bosses_search_bases():
+            for rel in ("data/bosses.json", "assets/bosses.json", "bosses.json", "default_bosses.json"):
+                p = base / rel
+                if p.exists():
+                    logger.info(f"[INIT] Found default bosses at {p}")
+                    return p
+        logger.debug("[INIT] No default bosses.json found in any search base")
+        return None
+    
     def _initialize_with_defaults(self) -> None:
         """Initialize database with default bosses if it doesn't exist, or merge defaults into existing."""
-        if not self.app_dir:
-            return
-        
-        # Look for default bosses.json in app directory (for packaged apps)
-        # Check in order: data/bosses.json, assets/bosses.json, bosses.json, default_bosses.json
-        default_bosses_path = self.app_dir / "data" / "bosses.json"
-        if not default_bosses_path.exists():
-            default_bosses_path = self.app_dir / "assets" / "bosses.json"
-        if not default_bosses_path.exists():
-            default_bosses_path = self.app_dir / "bosses.json"
-        if not default_bosses_path.exists():
-            # Also check for default_bosses.json in root (for development)
-            default_bosses_path = self.app_dir / "default_bosses.json"
-        
-        if not default_bosses_path.exists():
+        default_bosses_path = self._find_default_bosses_path()
+        if not default_bosses_path:
             logger.debug(f"[RESPAWN] No default bosses.json found, skipping initialization")
             return
         
@@ -527,7 +532,12 @@ class BossDatabase:
                 with open(self.db_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.bosses = data.get('bosses', [])
-                
+
+                # Default missing "enabled" to True so bosses are on by default (e.g. from bundled list or old format)
+                for boss in self.bosses:
+                    if 'enabled' not in boss:
+                        boss['enabled'] = True
+
                 total_bosses = len(self.bosses)
                 logger.info(f"[LOAD] Loaded {total_bosses} boss(es) from file")
                 

@@ -34,7 +34,39 @@ class MessageParser:
     LOCKOUT_PATTERN = re.compile(
         r"\[(.+?)\] You have incurred a lockout for (.+?) that expires in"
     )
-    
+
+    # Pattern: [timestamp] Boss Name in Zone (e.g. from Discord or manual posts)
+    # Matches lines like: [Sun Feb 15 13:56:04 2026] Lady Vox in Permafrost Caverns
+    SIMPLE_PATTERN = re.compile(r"^\[(.+?)\]\s+(.+?)\s+in\s+(.+)$", re.MULTILINE)
+
+    @classmethod
+    def parse_simple_line(cls, line: str) -> Optional[BossKillMessage]:
+        """
+        Parse a simple boss kill line: [timestamp] Boss Name in Zone.
+        Used for Discord messages that use this format instead of the guild message format.
+
+        Args:
+            line: A single line (e.g. "[Sun Feb 15 13:56:04 2026] Lady Vox in Permafrost Caverns")
+
+        Returns:
+            BossKillMessage if the line matches, None otherwise
+        """
+        line = line.strip()
+        if not line or line.startswith("("):
+            return None
+        match = cls.SIMPLE_PATTERN.match(line)
+        if not match:
+            return None
+        timestamp, monster, location = match.groups()
+        return BossKillMessage(
+            timestamp=timestamp.strip(),
+            server="",
+            player="",
+            guild="",
+            monster=monster.strip(),
+            location=location.strip(),
+        )
+
     @classmethod
     def parse_line(cls, line: str) -> Optional[BossKillMessage]:
         """

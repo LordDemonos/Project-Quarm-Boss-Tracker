@@ -23,7 +23,7 @@ A Windows desktop application that monitors EverQuest (TAKP) log files and sends
 - **Windows 10/11**, **macOS**, or **Linux** (with desktop environment)
 - EverQuest (TAKP) installation
 - Discord webhook URL
-- Discord bot token (for duplicate detection)
+- Discord bot token (for duplicate detection and Discord sync)
 
 **Note**: While originally designed for Windows, the application uses PyQt6 which provides cross-platform support. System tray and notifications work on all supported platforms.
 
@@ -38,11 +38,12 @@ A Windows desktop application that monitors EverQuest (TAKP) log files and sends
 
 The installer will:
 - Install the application to `%LOCALAPPDATA%\Programs\Boss Tracker`
+- Install a default boss list (all targets enabled) so you can start tracking after setting Discord
 - Create Start Menu shortcuts
 - Optionally create a Desktop shortcut
 - Register the uninstaller in Windows Programs and Features
 
-**Note**: During uninstallation, you'll be asked if you want to keep your settings and data. Choose "Yes" to preserve your configuration, bosses database, and activity log.
+**Note**: When uninstalling, a dialog appears first: choose whether to **keep your settings and data** (webhook, bot token, boss list, activity log), then click **Uninstall** to continue or **Cancel** to abort. The installer also removes any runtime logs left in the install folder.
 
 ### Option 2: Manual Installation (Development)
 
@@ -147,7 +148,7 @@ The bot is used to check for duplicate messages and prevent spam when multiple p
    - **Sound**: Enable/disable sound notifications
    - **Sound File**: Browse to select a custom sound file (supports .mp3, .wav, .ogg, .flac) or use "Reset to Default" for the default fanfare
    - **Accent Color**: Click the color button to customize the accent color for buttons and status bar
-   - **New Target Default Action**: Choose whether new targets are enabled or disabled by default (with optional auto-posting)
+   - **New Target Default Action**: Choose whether new targets are enabled or disabled by default (default: Enable; with optional auto-posting)
    - **Window Pop-up**: Enable to show window when new boss detected
    - **System Notification**: Enable for system tray notifications (works on Windows, macOS, and Linux)
    - **Backup & Restore**: Create a manual backup of your bosses database, or restore from a previous backup (Settings → Backup & Restore)
@@ -353,7 +354,7 @@ Settings and data files are stored in OS-specific user data directories:
 
 Files:
 - `settings.json` - Application settings (webhook URL, bot token, theme, accent color, Discord sync interval, etc.)
-- `bosses.json` - Boss database with enable/disable status and custom webhook URLs
+- `bosses.json` - Boss database (enable/disable status, respawn times, notes; all bosses use the webhook from settings)
 - `activity.json` - Activity log (full history)
 - `backups/` - Automatic and manual backups of `bosses.json` (used by Settings → Restore from Backup)
 - `logs/` - Application log files
@@ -364,12 +365,12 @@ Files:
 
 ### Automated Build (GitHub Actions)
 
-The installer is automatically built when you create a GitHub release:
+The installer is automatically built when you create a GitHub release. The **version number is taken from the release tag** (e.g. tag `v1.2.3` → installer `BossTracker-Setup-v1.2.3.exe` and About dialog show 1.2.3).
 
-1. Create a git tag: `git tag v1.0.0`
+1. Create a tag: `git tag v1.0.0` (or the version you want)
 2. Push the tag: `git push origin v1.0.0`
-3. Create a GitHub release with the tag
-4. GitHub Actions will automatically build the installer and attach it to the release
+3. On GitHub, go to **Releases** → **Create a new release**, choose that tag
+4. Publish the release — GitHub Actions builds the installer and attaches it to the release
 
 ### Manual Build
 
@@ -402,7 +403,7 @@ The script will:
 - **Verify webhook URL is correct**: Check that you copied the full webhook URL from Discord
 - **Check webhook channel**: Make sure the webhook hasn't been deleted or the channel hasn't been removed
 - **Test webhook**: You can test your webhook URL by pasting it in a browser (it should show webhook info) or using a tool like [Discord Webhook Tester](https://discord.com/api/webhooks/)
-- **Check application logs**: Look in `data/logs/` for error messages about Discord posting
+- **Check application logs**: Look in the `logs/` folder in your user data directory (see **Configuration Files** above for paths) for error messages about Discord posting
 
 ### Bot Can't Read Messages (Duplicate Detection)
 - Ensure "Message Content Intent" is enabled in Discord Developer Portal

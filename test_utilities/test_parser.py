@@ -64,7 +64,20 @@ def test_message_parser():
     assert parsed4.monster == "Boss`Name", "Should handle backtick in name"
     assert parsed4.location == "Zone Name", "Should handle spaces in location"
     print("[OK] Special characters handled correctly")
-    
+
+    # Test simple format (Discord-style): [timestamp] Boss Name in Zone
+    simple_line = "[Sun Feb 15 13:56:04 2026] Lady Vox in Permafrost Caverns"
+    parsed5 = parser.parse_simple_line(simple_line)
+    assert parsed5 is not None, "Should parse simple format"
+    assert parsed5.monster == "Lady Vox", f"Monster should be 'Lady Vox', got '{parsed5.monster}'"
+    assert parsed5.location == "Permafrost Caverns", f"Location should be 'Permafrost Caverns', got '{parsed5.location}'"
+    assert parsed5.timestamp == "Sun Feb 15 13:56:04 2026", "Timestamp should match"
+    print("[OK] Simple format (Discord-style) parsed correctly")
+
+    simple_reject = "(pacific time) (edited)"
+    assert parser.parse_simple_line(simple_reject) is None, "Should reject non-boss lines"
+    print("[OK] Simple format rejects non-matching lines")
+
     print("\n" + "=" * 60)
     print("All tests passed!")
 

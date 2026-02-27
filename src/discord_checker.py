@@ -7,9 +7,13 @@ except ImportError:
     discord = None
 
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
+import re
 import pytz
 import asyncio
+
+# Discord timestamp in messages: <t:unix_seconds:F> (or other format letters)
+DISCORD_TIMESTAMP_RE = re.compile(r"<t:(\d+):[RFdDfTt]>")
 
 try:
     import aiohttp
@@ -28,8 +32,15 @@ logger = get_logger(__name__)
 
 class DiscordChecker:
     """Checks Discord channel for duplicate messages."""
-    
+
     EST = pytz.timezone('US/Eastern')
+    CST = pytz.timezone('US/Central')
+    PST = pytz.timezone('US/Pacific')
+
+    # Users who post with CST timestamps (match if author name/display_name contains any, case-insensitive)
+    CST_POSTER_SUBSTRINGS = frozenset({"velde", "wool", "cukazi", "barakkas"})
+    # Users who post with PST timestamps
+    PST_POSTER_SUBSTRINGS = frozenset({"synth"})
     
     def __init__(self, bot_token: Optional[str] = None):
         if not DISCORD_AVAILABLE:
@@ -138,7 +149,62 @@ class DiscordChecker:
         
         # Check if normalized target name appears in normalized message
         return normalized_target in normalized_message
-    
+
+    @classmethod
+    def _is_cst_poster(cls, message) -> bool:
+        """True if message author is known to post timestamps in CST (e.g. Velde/Wool, Cukazi/Barakkas)."""
+        if not message or not getattr(message, "author", None):
+            return False
+        author = message.author
+        name = (getattr(author, "name", "") or "").lower()
+        display = (getattr(author, "display_name", "") or "").lower()
+        combined = f"{name} {display}"
+        return any(sub in combined for sub in cls.CST_POSTER_SUBSTRINGS)
+
+    @classmethod
+    def _is_pst_poster(cls, message) -> bool:
+        """True if message author is known to post timestamps in PST (e.g. Synth)."""
+        if not message or not getattr(message, "author", None):
+            return False
+        author = message.author
+        name = (getattr(author, "name", "") or "").lower()
+        display = (getattr(author, "display_name", "") or "").lower()
+        combined = f"{name} {display}"
+        return any(sub in combined for sub in cls.PST_POSTER_SUBSTRINGS)
+
+    def _parse_kill_timestamp_from_discord_message(
+        self, timestamp_str: str, message
+    ) -> Tuple[datetime, str]:
+        """
+        Parse timestamp string from a Discord message into EST datetime and display string.
+        Handles: (1) Discord format <t:unix:F>; (2) log format "Sun Feb 15 13:56:04 2026"
+        with author-based TZ (Velde/Cukazi=CST, Synth=PST, else EST).
+        Returns (kill_dt_est, timestamp_str_est). Raises ValueError if unparseable.
+        """
+        ts = (timestamp_str or "").strip()
+        # Discord format: <t:1771125694:F> (unix seconds)
+        discord_match = DISCORD_TIMESTAMP_RE.match(ts)
+        if discord_match:
+            unix_sec = int(discord_match.group(1))
+            dt_utc = datetime.utcfromtimestamp(unix_sec).replace(tzinfo=pytz.UTC)
+            kill_dt_est = dt_utc.astimezone(self.EST)
+            timestamp_str_est = kill_dt_est.strftime("%a %b %d %H:%M:%S %Y")
+            return kill_dt_est, timestamp_str_est
+        # Log-style format: "Sun Feb 15 13:56:04 2026"
+        kill_dt = datetime.strptime(ts, "%a %b %d %H:%M:%S %Y")
+        if self._is_pst_poster(message):
+            kill_dt_tz = self.PST.localize(kill_dt)
+            kill_dt_est = kill_dt_tz.astimezone(self.EST)
+            timestamp_str_est = kill_dt_est.strftime("%a %b %d %H:%M:%S %Y")
+            return kill_dt_est, timestamp_str_est
+        if self._is_cst_poster(message):
+            kill_dt_tz = self.CST.localize(kill_dt)
+            kill_dt_est = kill_dt_tz.astimezone(self.EST)
+            timestamp_str_est = kill_dt_est.strftime("%a %b %d %H:%M:%S %Y")
+            return kill_dt_est, timestamp_str_est
+        kill_dt_est = self.EST.localize(kill_dt)
+        return kill_dt_est, ts
+
     async def check_duplicate(self, channel_id: int, target_name: str,
                              log_timestamp: str, tolerance_minutes: int = 3) -> bool:
         """
@@ -364,94 +430,89 @@ class DiscordChecker:
                 if message_count % 50 == 0:
                     logger.debug(f"Scanned {message_count} messages so far...")
                 
-                # Try to parse message as a boss kill message
-                # Discord messages might contain the log line format or just the formatted message
-                parsed = MessageParser.parse_line(message.content)
-                
-                if parsed:
-                    parsed_messages += 1
-                    logger.debug(f"Parsed message #{message_count}: {parsed.monster} in {parsed.location} at {parsed.timestamp}")
-                    
-                    # Check if monster name includes a note in parentheses (e.g., "Thall Va Xakra (South)")
-                    # Extract note if present
-                    monster_name = parsed.monster
-                    note = None
-                    import re
-                    note_match = re.search(r'^(.+?)\s*\(([^)]+)\)$', monster_name)
-                    if note_match:
-                        monster_name = note_match.group(1).strip()
-                        note = note_match.group(2).strip()
-                        logger.debug(f"Extracted note '{note}' from boss name '{parsed.monster}' -> '{monster_name}'")
-                    
-                    # Found a parsed boss kill message
-                    monster_normalized = self._normalize_name(monster_name)
-                    
-                    # Check if this boss is in our list
-                    if monster_normalized in normalized_bosses:
-                        matched_messages += 1
-                        original_name = normalized_bosses[monster_normalized]
-                        
-                        logger.info(f"Found matching boss kill in Discord: {original_name}{f' ({note})' if note else ''} at {parsed.timestamp}")
-                        
-                        # Parse timestamp from message
-                        try:
-                            kill_dt = datetime.strptime(parsed.timestamp, "%a %b %d %H:%M:%S %Y")
-                            kill_dt_est = self.EST.localize(kill_dt)
-                            
-                            # Create a unique key that includes note if present
-                            # For duplicate bosses, we need to track by name+note combination
-                            kill_key = f"{monster_normalized}|{note}" if note else monster_normalized
-                            
-                            # Keep the most recent kill for each boss (or boss+note combination)
-                            if kill_key not in found_kills:
-                                found_kills[kill_key] = {
-                                    'timestamp': kill_dt_est,
-                                    'timestamp_str': parsed.timestamp,
-                                    'monster_name': original_name,
-                                    'note': note,  # Store note if extracted
-                                    'message_content': message.content[:200]  # First 200 chars
-                                }
-                                logger.info(f"  -> New kill time for {original_name}{f' ({note})' if note else ''}: {parsed.timestamp}")
-                            elif kill_dt_est > found_kills[kill_key]['timestamp']:
-                                # This kill is more recent, update it
-                                old_time = found_kills[kill_key]['timestamp_str']
-                                found_kills[kill_key] = {
-                                    'timestamp': kill_dt_est,
-                                    'timestamp_str': parsed.timestamp,
-                                    'monster_name': original_name,
-                                    'note': note,  # Store note if extracted
-                                    'message_content': message.content[:200]
-                                }
-                                logger.info(f"  -> Updated kill time for {original_name}{f' ({note})' if note else ''}: {old_time} -> {parsed.timestamp}")
-                        except ValueError as e:
-                            logger.warning(f"Could not parse timestamp '{parsed.timestamp}' from Discord message: {e}")
+                # Try to parse message as boss kill(s). Discord messages may be multi-line with
+                # guild format, lockout format, or simple "[timestamp] Boss in Zone" per line.
+                parsed_results = []
+                for line in message.content.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parsed = (
+                        MessageParser.parse_line(line)
+                        or MessageParser.parse_lockout_line(line)
+                        or MessageParser.parse_simple_line(line)
+                    )
+                    if parsed:
+                        parsed_results.append(parsed)
+
+                if parsed_results:
+                    for parsed in parsed_results:
+                        parsed_messages += 1
+                        logger.debug(f"Parsed message #{message_count}: {parsed.monster} in {parsed.location} at {parsed.timestamp}")
+
+                        # Check if monster name includes a note in parentheses (e.g., "Thall Va Xakra (South)")
+                        monster_name = parsed.monster
+                        note = None
+                        import re
+                        note_match = re.search(r'^(.+?)\s*\(([^)]+)\)$', monster_name)
+                        if note_match:
+                            monster_name = note_match.group(1).strip()
+                            note = note_match.group(2).strip()
+                            logger.debug(f"Extracted note '{note}' from boss name '{parsed.monster}' -> '{monster_name}'")
+
+                        monster_normalized = self._normalize_name(monster_name)
+
+                        if monster_normalized in normalized_bosses:
+                            matched_messages += 1
+                            original_name = normalized_bosses[monster_normalized]
+                            logger.info(f"Found matching boss kill in Discord: {original_name}{f' ({note})' if note else ''} at {parsed.timestamp}")
+
+                            try:
+                                kill_dt_est, timestamp_str_est = self._parse_kill_timestamp_from_discord_message(
+                                    parsed.timestamp, message
+                                )
+                                kill_key = f"{monster_normalized}|{note}" if note else monster_normalized
+
+                                if kill_key not in found_kills:
+                                    found_kills[kill_key] = {
+                                        'timestamp': kill_dt_est,
+                                        'timestamp_str': timestamp_str_est,
+                                        'monster_name': original_name,
+                                        'note': note,
+                                        'message_content': message.content[:200],
+                                    }
+                                    logger.info(f"  -> New kill time for {original_name}{f' ({note})' if note else ''}: {timestamp_str_est}")
+                                elif kill_dt_est > found_kills[kill_key]['timestamp']:
+                                    old_time = found_kills[kill_key]['timestamp_str']
+                                    found_kills[kill_key] = {
+                                        'timestamp': kill_dt_est,
+                                        'timestamp_str': timestamp_str_est,
+                                        'monster_name': original_name,
+                                        'note': note,
+                                        'message_content': message.content[:200],
+                                    }
+                                    logger.info(f"  -> Updated kill time for {original_name}{f' ({note})' if note else ''}: {old_time} -> {timestamp_str_est}")
+                            except ValueError as e:
+                                logger.warning(f"Could not parse timestamp '{parsed.timestamp}' from Discord message: {e}")
                 else:
-                    # Try to match boss names directly in message content (fallback)
-                    # This handles cases where messages might be formatted differently
+                    # Fallback: match every boss name that appears in the message (no break)
                     message_normalized = self._normalize_name(message.content)
-                    
+                    msg_timestamp_est = message.created_at.astimezone(self.EST)
+                    timestamp_str = msg_timestamp_est.strftime("%a %b %d %H:%M:%S %Y")
+
                     for normalized_name, original_name in normalized_bosses.items():
                         if normalized_name in message_normalized:
                             matched_messages += 1
                             logger.info(f"Found boss name '{original_name}' in Discord message (unparsed format)")
-                            
-                            # Found boss name in message, try to extract timestamp
-                            # Discord message timestamps are in UTC
-                            msg_timestamp = message.created_at
-                            msg_timestamp_est = msg_timestamp.astimezone(self.EST)
-                            
-                            # Format timestamp in log format
-                            timestamp_str = msg_timestamp_est.strftime("%a %b %d %H:%M:%S %Y")
-                            
                             logger.info(f"  -> Using Discord message timestamp: {timestamp_str}")
-                            
-                            # Keep the most recent kill for each boss
+
                             if normalized_name not in found_kills:
                                 found_kills[normalized_name] = {
                                     'timestamp': msg_timestamp_est,
                                     'timestamp_str': timestamp_str,
                                     'monster_name': original_name,
-                                    'message_content': message.content[:200]
+                                    'note': None,
+                                    'message_content': message.content[:200],
                                 }
                             elif msg_timestamp_est > found_kills[normalized_name]['timestamp']:
                                 old_time = found_kills[normalized_name]['timestamp_str']
@@ -459,10 +520,10 @@ class DiscordChecker:
                                     'timestamp': msg_timestamp_est,
                                     'timestamp_str': timestamp_str,
                                     'monster_name': original_name,
-                                    'message_content': message.content[:200]
+                                    'note': None,
+                                    'message_content': message.content[:200],
                                 }
                                 logger.info(f"  -> Updated kill time for {original_name}: {old_time} -> {timestamp_str}")
-                            break  # Found a match, move to next message
             
             scan_summary = f"Discord scan complete: Scanned {message_count} messages"
             if stopped_early:

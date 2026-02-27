@@ -77,8 +77,14 @@ jobs:
     
     - name: Build executable and installer
       shell: pwsh
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
       run: |
         $version = "${{ steps.version.outputs.version }}"
+        if (-not $version) {
+          if (Test-Path version.txt) { $version = (Get-Content version.txt -Raw).Trim() }
+          if (-not $version) { $version = "1.0.0" }
+        }
         python build_installer.py $version
         if ($LASTEXITCODE -ne 0) {
           Write-Error "Build failed"

@@ -114,13 +114,13 @@ def build_executable(version: str):
     
     try:
         subprocess.run(cmd, check=True)
-        print("✓ Executable built successfully!")
+        print("[OK] Executable built successfully!")
         print(f"  Output: dist/BossTracker.exe")
     except subprocess.CalledProcessError as e:
-        print(f"✗ Error building executable: {e}")
+        print(f"[FAIL] Error building executable: {e}")
         sys.exit(1)
     except FileNotFoundError:
-        print("✗ PyInstaller not found. Install it with: pip install pyinstaller")
+        print("[FAIL] PyInstaller not found. Install it with: pip install pyinstaller")
         sys.exit(1)
 
 
@@ -173,7 +173,7 @@ def build_installer(version):
     # Find Inno Setup compiler
     iscc_path = find_innosetup_compiler()
     if not iscc_path:
-        print("✗ Inno Setup compiler (ISCC.exe) not found.")
+        print("[FAIL] Inno Setup compiler (ISCC.exe) not found.")
         print("  Please install Inno Setup from https://jrsoftware.org/isinfo.php")
         print("  Or install via Chocolatey: choco install innosetup")
         sys.exit(1)
@@ -181,14 +181,14 @@ def build_installer(version):
     # Check if executable exists (--onedir mode creates a folder)
     exe_path = Path('dist/BossTracker/BossTracker.exe')
     if not exe_path.exists():
-        print("✗ Executable not found. Run build_executable() first.")
+        print("[FAIL] Executable not found. Run build_executable() first.")
         print(f"  Expected: {exe_path}")
         sys.exit(1)
     
     # Check if installer script exists
     iss_path = Path('installer/boss_tracker.iss')
     if not iss_path.exists():
-        print(f"✗ Installer script not found: {iss_path}")
+        print(f"[FAIL] Installer script not found: {iss_path}")
         sys.exit(1)
     
     # Compile installer script
@@ -203,7 +203,7 @@ def build_installer(version):
     
     try:
         result = subprocess.run(cmd, check=True)
-        print("✓ Installer built successfully!")
+        print("[OK] Installer built successfully!")
         
         # Find output installer
         installer_name = f"BossTracker-Setup-v{version}.exe"
@@ -218,10 +218,10 @@ def build_installer(version):
             print("  Check dist/ directory for installer files")
             
     except subprocess.CalledProcessError as e:
-        print(f"✗ Error building installer: {e}")
+        print(f"[FAIL] Error building installer: {e}")
         sys.exit(1)
     except FileNotFoundError:
-        print("✗ Inno Setup compiler not found at expected location")
+        print("[FAIL] Inno Setup compiler not found at expected location")
         sys.exit(1)
 
 
@@ -241,15 +241,15 @@ def validate_files():
         if not file_path.exists():
             missing.append(str(file_path))
         else:
-            print(f"  ✓ {file_path}")
+            print(f"  [OK] {file_path}")
     
     if missing:
-        print("\n✗ Missing required files:")
+        print("\n[FAIL] Missing required files:")
         for file_path in missing:
             print(f"  - {file_path}")
         sys.exit(1)
     
-    print("✓ All required files found")
+    print("[OK] All required files found")
 
 
 def main():
@@ -259,12 +259,15 @@ def main():
     print("=" * 60)
     
     # Get version (from command line argument or auto-detect)
-    if len(sys.argv) > 1 and sys.argv[1] != '--skip-exe':
-        version = sys.argv[1].lstrip('v')
-        print(f"\nVersion (from argument): {version}")
+    if len(sys.argv) > 1 and sys.argv[1] not in ('', '--skip-exe'):
+        version = sys.argv[1].strip().lstrip('v')
     else:
         version = get_version()
-        print(f"\nVersion: {version}")
+    
+    if not version:
+        version = '1.0.0'
+    
+    print(f"\nVersion: {version}")
     
     # Validate files
     validate_files()

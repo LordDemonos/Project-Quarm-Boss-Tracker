@@ -45,6 +45,7 @@ Thumbs.db
 data/*.json
 !data/settings.json.example
 !data/bosses.json.example
+!data/bosses.json
 data/logs/
 *.log
 

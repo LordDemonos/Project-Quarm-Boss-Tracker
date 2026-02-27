@@ -82,7 +82,10 @@ jobs:
       run: |
         $version = "${{ steps.version.outputs.version }}"
         if (-not $version) {
-          if (Test-Path version.txt) { $version = (Get-Content version.txt -Raw).Trim() }
+          if (Test-Path version.txt) {
+            $content = Get-Content version.txt -Raw
+            if ($content) { $version = $content.Trim() }
+          }
           if (-not $version) { $version = "1.0.0" }
         }
         python build_installer.py $version

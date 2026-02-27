@@ -19,8 +19,8 @@ def _get_version() -> str:
     """Get application version from version.txt."""
     try:
         if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            base_dir = Path(sys.executable).parent
+            # PyInstaller bundles data in sys._MEIPASS (_internal folder)
+            base_dir = Path(sys._MEIPASS)
         else:
             # Running as script
             base_dir = Path(__file__).parent.parent
@@ -38,7 +38,7 @@ def _get_release_date() -> str:
     """Get release date from version.txt modification time or use default."""
     try:
         if getattr(sys, 'frozen', False):
-            base_dir = Path(sys.executable).parent
+            base_dir = Path(sys._MEIPASS)
         else:
             base_dir = Path(__file__).parent.parent
         

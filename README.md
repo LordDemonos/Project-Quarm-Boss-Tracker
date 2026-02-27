@@ -17,6 +17,16 @@ A Windows desktop application that monitors EverQuest (TAKP) log files and sends
 - **System Tray**: Minimize to tray, optional pop-up on new boss detection (Windows, macOS, Linux)
 - **Cross-Platform**: Works on Windows, macOS, and Linux with appropriate desktop environments
 
+## Screenshots
+
+| Main UI | Settings |
+|---------|----------|
+| ![Main window with targets by zone](docs/images/ui.png) | ![Settings dialog](docs/images/settings.png) |
+
+| Tools menu | Message Format |
+|------------|----------------|
+| ![Tools menu](docs/images/tools.png) | ![Message Format editor](docs/images/message.png) |
+
 ## Requirements
 
 - Python 3.8 or higher

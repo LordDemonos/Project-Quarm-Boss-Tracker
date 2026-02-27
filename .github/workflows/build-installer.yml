@@ -97,15 +97,15 @@ jobs:
     - name: Upload installer artifact
       uses: actions/upload-artifact@v4
       with:
-        name: BossTracker-Setup-v${{ steps.version.outputs.version }}
-        path: dist/BossTracker-Setup-v${{ steps.version.outputs.version }}.exe
+        name: BossTracker-Setup
+        path: dist/BossTracker-Setup-v*.exe
         retention-days: 30
     
     - name: Upload installer to release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/BossTracker-Setup-v${{ steps.version.outputs.version }}.exe
+        files: dist/BossTracker-Setup-v*.exe
         draft: false
         prerelease: false
       env:

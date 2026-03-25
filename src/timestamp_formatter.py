@@ -54,21 +54,20 @@ class TimestampFormatter:
         Parse timestamp from log message.
         
         Format: "Sat Jan 31 23:30:48 2026"
-        Returns datetime in EST (server time)
+        Interpreted in the user's configured timezone (game client typically shows local time).
+        Returns datetime in user_tz (timezone-aware).
         
         Args:
             timestamp_str: Timestamp string from log
             
         Returns:
-            datetime object in EST, or None if parsing fails
+            datetime object in user_tz, or None if parsing fails
         """
         try:
-            # Parse the timestamp (assumes EST/server time)
             dt = datetime.strptime(timestamp_str, "%a %b %d %H:%M:%S %Y")
-            # Localize to EST
-            dt_est = self.EST.localize(dt)
-            logger.debug(f"Parsed timestamp: {timestamp_str} -> {dt_est}")
-            return dt_est
+            dt_local = self.user_tz.localize(dt)
+            logger.debug(f"Parsed timestamp: {timestamp_str} -> {dt_local} (user_tz: {self.user_tz})")
+            return dt_local
         except ValueError as e:
             logger.warning(f"Failed to parse timestamp '{timestamp_str}': {e}")
             return None
@@ -89,8 +88,11 @@ class TimestampFormatter:
         """
         Format log timestamp as Discord timestamp.
         
+        Log timestamp is interpreted in the user's configured timezone, then converted
+        to Unix seconds so Discord displays it in each viewer's local time.
+        
         Args:
-            timestamp_str: Timestamp string from log (EST)
+            timestamp_str: Timestamp string from log (in user's timezone)
             format_type: Discord format type:
                         'F' - Full date/time (default)
                         'R' - Relative time
@@ -104,18 +106,12 @@ class TimestampFormatter:
         Returns:
             Discord timestamp string like "<t:1234567890:F>"
         """
-        dt_est = self.parse_log_timestamp(timestamp_str)
-        if not dt_est:
+        dt_local = self.parse_log_timestamp(timestamp_str)
+        if not dt_local:
             logger.warning(f"Could not format Discord timestamp, returning original: {timestamp_str}")
             return timestamp_str  # Return original if parsing fails
         
-        # Convert to user's timezone
-        dt_user = dt_est.astimezone(self.user_tz)
-        
-        # Convert to Unix timestamp
-        unix_ts = self.to_unix_timestamp(dt_user)
-        
-        # Format as Discord timestamp
+        unix_ts = self.to_unix_timestamp(dt_local)
         result = f"<t:{unix_ts}:{format_type}>"
         logger.debug(f"Formatted Discord timestamp: {timestamp_str} -> {result} (user_tz: {self.user_tz})")
         return result
@@ -194,7 +190,7 @@ class TimestampFormatter:
         Compare two timestamps to see if they're within tolerance.
         
         Used for duplicate detection - accounts for timezone differences.
-        Both timestamps are assumed to be in EST (server time).
+        Both timestamps are assumed to be in the user's configured timezone.
         
         Args:
             timestamp1_str: First timestamp string (EST)

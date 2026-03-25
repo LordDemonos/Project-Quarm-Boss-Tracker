@@ -42,14 +42,15 @@ class DiscordChecker:
     # Users who post with PST timestamps
     PST_POSTER_SUBSTRINGS = frozenset({"synth"})
     
-    def __init__(self, bot_token: Optional[str] = None):
+    def __init__(self, bot_token: Optional[str] = None, log_timezone: Optional[str] = None):
         if not DISCORD_AVAILABLE:
             raise ImportError("discord.py is not installed. Install it with: pip install discord.py")
         """
         Initialize the Discord checker.
-        
+
         Args:
             bot_token: Discord bot token for reading messages
+            log_timezone: IANA timezone for log timestamps (e.g. 'US/Pacific'). If None/empty, uses US/Eastern.
         """
         self.bot_token = bot_token
         self.client: Optional[discord.Client] = None
@@ -57,7 +58,21 @@ class DiscordChecker:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread = None
         self._client_loop: Optional[asyncio.AbstractEventLoop] = None  # Store client's event loop
-    
+        try:
+            self._log_tz = pytz.timezone(log_timezone.strip()) if log_timezone and log_timezone.strip() else self.EST
+        except Exception:
+            self._log_tz = self.EST
+
+    def set_log_timezone(self, iana_timezone: Optional[str] = None) -> None:
+        """Set timezone for interpreting log timestamps (user's configured timezone). Pass None or empty for US/Eastern."""
+        if not iana_timezone or not iana_timezone.strip():
+            self._log_tz = self.EST
+            return
+        try:
+            self._log_tz = pytz.timezone(iana_timezone.strip())
+        except Exception:
+            self._log_tz = self.EST
+
     async def initialize(self) -> bool:
         """
         Initialize Discord client.
@@ -213,7 +228,7 @@ class DiscordChecker:
         Args:
             channel_id: Discord channel ID
             target_name: Target/boss name to check for
-            log_timestamp: Timestamp from log (EST format: "Sat Jan 31 23:30:48 2026")
+            log_timestamp: Timestamp from log (format: "Sat Jan 31 23:30:48 2026", in user's configured timezone)
             tolerance_minutes: Time window in minutes (default 3)
             
         Returns:
@@ -230,42 +245,27 @@ class DiscordChecker:
                 logger.warning(f"Channel {channel_id} not found")
                 return False
             
-            # Parse log timestamp (EST)
+            # Parse log timestamp in user's configured timezone (game client shows local time)
             try:
                 dt_log = datetime.strptime(log_timestamp, "%a %b %d %H:%M:%S %Y")
-                dt_log_est = self.EST.localize(dt_log)
+                dt_log_local = self._log_tz.localize(dt_log)
             except ValueError as e:
                 logger.error(f"Failed to parse log timestamp '{log_timestamp}': {e}")
                 return False
             
-            # Calculate time window (account for timezone differences)
-            # People may post in different timezones, so expand window to +/- 6 hours
-            # This accounts for EST, CST, MST, PST, etc.
-            # Check messages from tolerance + 6 hours ago to tolerance + 6 hours in future
-            window_start = dt_log_est - timedelta(minutes=tolerance_minutes + 360)
-            window_end = dt_log_est + timedelta(minutes=tolerance_minutes + 360)
-            
+            # Time window for duplicate check (expand for timezone variance)
+            window_start = dt_log_local - timedelta(minutes=tolerance_minutes + 360)
+            window_end = dt_log_local + timedelta(minutes=tolerance_minutes + 360)
             logger.debug(f"Checking messages between {window_start} and {window_end}")
-            
-            # Fetch recent messages (Discord API limit is 100 messages)
+
             message_count = 0
             async for message in channel.history(limit=100):
                 message_count += 1
-                
-                # Check if message contains target name (with normalization for backticks/single quotes)
                 if self._name_matches(target_name, message.content):
-                    # Get message timestamp (Discord messages are in UTC)
                     msg_timestamp = message.created_at
-                    
-                    # Convert to EST for comparison
-                    msg_timestamp_est = msg_timestamp.astimezone(self.EST)
-                    
-                    # Check if within tolerance window
-                    if window_start <= msg_timestamp_est <= window_end:
-                        # Check if within actual tolerance (3 minutes)
-                        # But also check if message might be in a different timezone
-                        # If someone posts "9pm CST" and log shows "10pm EST", they're the same time
-                        diff_seconds = abs((dt_log_est - msg_timestamp_est).total_seconds())
+                    msg_in_log_tz = msg_timestamp.astimezone(self._log_tz)
+                    if window_start <= msg_in_log_tz <= window_end:
+                        diff_seconds = abs((dt_log_local - msg_in_log_tz).total_seconds())
                         
                         # Allow up to tolerance_minutes, but also check if message content
                         # suggests a different timezone (e.g., "CST", "PST", etc.)
@@ -345,7 +345,7 @@ class DiscordChecker:
         Args:
             channel_id: Discord channel ID (or None to skip check)
             target_name: Target/boss name to check for
-            log_timestamp: Timestamp from log (EST format: "Sat Jan 31 23:30:48 2026")
+            log_timestamp: Timestamp from log (user's timezone; format "Sat Jan 31 23:30:48 2026")
             tolerance_minutes: Time window in minutes (default 3)
             
         Returns:

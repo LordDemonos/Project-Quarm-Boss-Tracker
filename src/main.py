@@ -379,6 +379,7 @@ class BossTrackerApp(QObject):
                     # #endregion
                     
                     self.discord_checker = DiscordChecker(bot_token)
+                    self.discord_checker.set_log_timezone(self.settings.get('timezone', ''))
                     # Initialize the Discord client in a background thread
                     import asyncio
                     import threading
@@ -3043,7 +3044,8 @@ class BossTrackerApp(QObject):
         # Update timezone (empty = auto-detect; formatter supports any IANA name including EU/AUS)
         timezone = self.settings.get('timezone', '')
         self.timestamp_formatter.set_timezone(timezone)
-        
+        if self.discord_checker:
+            self.discord_checker.set_log_timezone(timezone)
         # Update time format in zone widget
         use_military_time = self.settings.get('use_military_time', False)
         self.main_window.zone_widget.set_time_format(use_military_time)
@@ -3083,6 +3085,7 @@ class BossTrackerApp(QObject):
                     import threading
                     logger.info("Creating Discord checker from saved credentials (token length=%d)", len(bot_token))
                     self.discord_checker = DiscordChecker(bot_token)
+                    self.discord_checker.set_log_timezone(self.settings.get('timezone', ''))
 
                     def _init_discord_checker():
                         try:
@@ -3101,6 +3104,7 @@ class BossTrackerApp(QObject):
                 logger.warning("Discord checker not available (discord.py not installed)")
         elif bot_token and self.discord_checker:
             self.discord_checker.bot_token = bot_token
+            self.discord_checker.set_log_timezone(self.settings.get('timezone', ''))
             logger.info("Discord checker bot token updated")
         
         # Update log monitor if directory changed
